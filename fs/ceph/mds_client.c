@@ -2609,9 +2609,8 @@ static void encode_mclientrequest_tail(void **p, const struct ceph_mds_request *
 
 	/* v6: fscrypt_auth and fscrypt_file */
 	if (req->r_fscrypt_auth) {
-		u32 authlen = le32_to_cpu(req->r_fscrypt_auth->cfa_blob_len);
+		u32 authlen = ceph_fscrypt_auth_len(req->r_fscrypt_auth);
 
-		authlen += offsetof(struct ceph_fscrypt_auth, cfa_blob);
 		ceph_encode_32(p, authlen);
 		ceph_encode_copy(p, req->r_fscrypt_auth, authlen);
 	} else {
