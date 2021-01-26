@@ -1607,7 +1607,8 @@ again:
 
 	if ((got & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) == 0 ||
 	    (iocb->ki_flags & IOCB_DIRECT) ||
-	    (fi->flags & CEPH_F_SYNC)) {
+	    (fi->flags & CEPH_F_SYNC) ||
+	    IS_ENCRYPTED(inode)) {
 
 		dout("aio_sync_read %p %llx.%llx %llu~%u got cap refs on %s\n",
 		     inode, ceph_vinop(inode), iocb->ki_pos, (unsigned)len,
@@ -1824,7 +1825,8 @@ retry_snap:
 
 	if ((got & (CEPH_CAP_FILE_BUFFER|CEPH_CAP_FILE_LAZYIO)) == 0 ||
 	    (iocb->ki_flags & IOCB_DIRECT) || (fi->flags & CEPH_F_SYNC) ||
-	    (ci->i_ceph_flags & CEPH_I_ERROR_WRITE)) {
+	    (ci->i_ceph_flags & CEPH_I_ERROR_WRITE) ||
+	    IS_ENCRYPTED(inode)) {
 		struct ceph_snap_context *snapc;
 		struct iov_iter data;
 
