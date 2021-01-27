@@ -1492,6 +1492,7 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 	while ((len = iov_iter_count(from)) > 0) {
 		size_t left;
 		int n;
+		u64 baseblock = pos >> CEPH_FSCRYPT_BLOCK_SHIFT;
 
 		vino = ceph_vino(inode);
 		req = ceph_osdc_new_request(&fsc->client->osdc, &ci->i_layout,
@@ -1523,6 +1524,13 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 				break;
 			}
 			left -= ret;
+			if (IS_ENCRYPTED(inode)) {
+				ret = fscrypt_encrypt_block_inplace(inode, pages[n],
+							    CEPH_FSCRYPT_BLOCK_SIZE, 0,
+							    baseblock + n, GFP_KERNEL);
+				if (ret)
+					break;
+			}
 		}
 
 		if (ret < 0) {
