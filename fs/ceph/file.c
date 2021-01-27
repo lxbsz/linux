@@ -1482,6 +1482,13 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 
 	flags = /* CEPH_OSD_FLAG_ORDERSNAP | */ CEPH_OSD_FLAG_WRITE;
 
+	/* FIXME: temporary hack until we can do a proper RMW cycle */
+	if (IS_ENCRYPTED(inode)) {
+		len = iov_iter_count(from);
+		if ((pos & ~CEPH_FSCRYPT_BLOCK_MASK) || (len & ~CEPH_FSCRYPT_BLOCK_MASK))
+			return -EINVAL;
+	}
+
 	while ((len = iov_iter_count(from)) > 0) {
 		size_t left;
 		int n;
@@ -1498,7 +1505,6 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 			break;
 		}
 
-		/* FIXME: express in FSCRYPT_BLOCK_SIZE units */
 		num_pages = calc_pages_for(pos, len);
 		pages = ceph_alloc_page_vector(num_pages, GFP_KERNEL);
 		if (IS_ERR(pages)) {
