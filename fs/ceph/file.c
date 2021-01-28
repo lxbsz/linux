@@ -918,6 +918,7 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 
 	if (!len)
 		return 0;
+
 	/*
 	 * flush any page cache pages in this range.  this
 	 * will make concurrent normal and sync io slow,
@@ -939,9 +940,17 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 		bool more;
 		int idx;
 		size_t left;
+		u64 read_off = off;
+		u64 read_len = len;
 
+		fscrypt_adjust_off_and_len(inode, &read_off, &read_len);
+
+		dout("sync_read orig %llu~%llu reading %llu~%llu",
+		     off, len, read_off, read_len);
+
+		/* determine new offset/length if encrypted */
 		req = ceph_osdc_new_request(osdc, &ci->i_layout,
-					ci->i_vino, off, &len, 0, 1,
+					ci->i_vino, read_off, &read_len, 0, 1,
 					CEPH_OSD_OP_READ, CEPH_OSD_FLAG_READ,
 					NULL, ci->i_truncate_seq,
 					ci->i_truncate_size, false);
@@ -950,10 +959,10 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 			break;
 		}
 
-		more = len < iov_iter_count(to);
+		more = read_len < iov_iter_count(to);
 
-		num_pages = calc_pages_for(off, len);
-		page_off = off & ~PAGE_MASK;
+		num_pages = calc_pages_for(read_off, read_len);
+		page_off = read_off & ~PAGE_MASK;
 		pages = ceph_alloc_page_vector(num_pages, GFP_KERNEL);
 		if (IS_ERR(pages)) {
 			ceph_osdc_put_request(req);
@@ -961,7 +970,7 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 			break;
 		}
 
-		osd_req_op_extent_osd_data_pages(req, 0, pages, len, page_off,
+		osd_req_op_extent_osd_data_pages(req, 0, pages, read_len, page_off,
 						 false, false);
 		ret = ceph_osdc_start_request(osdc, req, false);
 		if (!ret)
@@ -978,8 +987,39 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 		dout("sync_read %llu~%llu got %zd i_size %llu%s\n",
 		     off, len, ret, i_size, (more ? " MORE" : ""));
 
-		if (ret == -ENOENT)
+		if (ret == -ENOENT) {
 			ret = 0;
+		} else if (ret > 0 && IS_ENCRYPTED(inode)) {
+			int i;
+			int bytes = ret;
+			int baseblk = read_off >> CEPH_FSCRYPT_BLOCK_SHIFT;
+			int num_blocks = ceph_fscrypt_blocks(read_off, read_len);
+
+			/* Can't deal with partial blocks */
+			WARN_ON_ONCE(bytes & ~CEPH_FSCRYPT_BLOCK_MASK);
+
+			for (i = 0; i < num_blocks; ++i) {
+				int blkoff = i << CEPH_FSCRYPT_BLOCK_SHIFT;
+				int pgidx = blkoff >> PAGE_SHIFT;
+				unsigned int pgoffs = blkoff & ~PAGE_MASK;
+				int fret;
+
+				fret = fscrypt_decrypt_block_inplace(inode, pages[pgidx],
+						CEPH_FSCRYPT_BLOCK_SIZE, pgoffs,
+						baseblk + i);
+				if (fret < 0) {
+					ret = fret;
+					ceph_release_page_vector(pages, num_pages);
+					goto out;
+				}
+
+				bytes -= CEPH_FSCRYPT_BLOCK_SIZE;
+				if (!bytes)
+					break;
+			}
+		}
+
+		page_off = off & ~PAGE_MASK;
 		if (ret >= 0 && ret < len && (off + ret < i_size)) {
 			int zlen = min(len - ret, i_size - off - ret);
 			int zoff = page_off + ret;
@@ -1024,7 +1064,7 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 		ret = off - iocb->ki_pos;
 		iocb->ki_pos = off;
 	}
-
+out:
 	dout("sync_read result %zd retry_op %d\n", ret, *retry_op);
 	return ret;
 }
