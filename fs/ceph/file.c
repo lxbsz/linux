@@ -996,7 +996,8 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 			int num_blocks = ceph_fscrypt_blocks(read_off, read_len);
 
 			/* Can't deal with partial blocks */
-			WARN_ON_ONCE(bytes & ~CEPH_FSCRYPT_BLOCK_MASK);
+			if (bytes & ~CEPH_FSCRYPT_BLOCK_MASK)
+				printk("Unaligned read: bytes=%d read_off=%llu read_len=%llu i_size=%llu\n", bytes, read_off, read_len, i_size);
 
 			for (i = 0; i < num_blocks; ++i) {
 				int blkoff = i << CEPH_FSCRYPT_BLOCK_SHIFT;
