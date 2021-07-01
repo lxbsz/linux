@@ -353,8 +353,13 @@ int ceph_open(struct inode *inode, struct file *file)
 
 	/* filter out O_CREAT|O_EXCL; vfs did that already.  yuck. */
 	flags = file->f_flags & ~(O_CREAT|O_EXCL);
-	if (S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode)) {
 		flags = O_DIRECTORY;  /* mds likes to know */
+	} else if (S_ISREG(inode->i_mode)) {
+		err = fscrypt_file_open(inode, file);
+		if (err)
+			return err;
+	}
 
 	dout("open inode %p ino %llx.%llx file %p flags %d (%d)\n", inode,
 	     ceph_vinop(inode), file, flags, file->f_flags);
@@ -690,6 +695,13 @@ retry:
 		/* If it's not being looked up, it's negative */
 		return -ENOENT;
 	}
+
+#if 0
+	/* Need to export this? */
+	err = fscrypt_require_key(dir);
+	if (err)
+		return err;
+#endif
 
 	/* do the open */
 	req = prepare_open_request(dir->i_sb, flags, mode);
