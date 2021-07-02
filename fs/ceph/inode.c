@@ -715,6 +715,10 @@ int ceph_fill_file_size(struct inode *inode, int issued,
 	int queue_trunc = 0;
 	loff_t isize = i_size_read(inode);
 
+	dout("%llx:%llx issued %s tseq %u ci->tseq %u tsize %llu size %llu",
+		ceph_vinop(inode), ceph_cap_string(issued), truncate_seq,
+		ci->i_truncate_seq, truncate_size, size);
+
 	if (ceph_seq_cmp(truncate_seq, ci->i_truncate_seq) > 0 ||
 	    (truncate_seq == ci->i_truncate_seq && size > isize)) {
 		dout("size %lld -> %llu\n", isize, size);
