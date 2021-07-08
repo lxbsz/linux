@@ -2678,7 +2678,7 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 
 	encode_timestamp_and_gids(&p, req);
 
-	if (WARN_ON_ONCE(p > end)) {
+	if (WARN_ONCE(p > end, "p=%p end=%p len=%d\n", p, end, len)) {
 		ceph_msg_put(msg);
 		msg = ERR_PTR(-ERANGE);
 		goto out_free2;
