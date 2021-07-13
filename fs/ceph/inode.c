@@ -2391,7 +2391,6 @@ int __ceph_setattr(struct inode *inode, struct iattr *attr, struct ceph_iattr *c
 					cpu_to_le64(round_up(isize,
 							     CEPH_FSCRYPT_BLOCK_SIZE));
 				req->r_fscrypt_file = attr->ia_size;
-				/* FIXME: client must zero out any partial blocks! */
 			} else {
 				req->r_args.setattr.size = cpu_to_le64(attr->ia_size);
 				req->r_args.setattr.old_size = cpu_to_le64(isize);
@@ -2480,8 +2479,28 @@ out:
 	ceph_mdsc_put_request(req);
 	ceph_free_cap_flush(prealloc_cf);
 
-	if (err >= 0 && (mask & CEPH_SETATTR_SIZE))
+	if (err >= 0 && (mask & (CEPH_SETATTR_SIZE|CEPH_SETATTR_FSCRYPT_FILE))) {
 		__ceph_do_pending_vmtruncate(inode);
+		if (mask & CEPH_SETATTR_FSCRYPT_FILE) {
+			loff_t orig_len, len;
+
+			len = round_up(attr->ia_size, CEPH_FSCRYPT_BLOCK_SIZE) - attr->ia_size;
+			orig_len = len;
+
+			/*
+			 * FIXME: this is just doing the truncating the last OSD
+			 * 	  object, but for "real" fscrypt support, we need
+			 * 	  to do a RMW with the end of the block zeroed out.
+			 */
+			if (len) {
+				err = ceph_zero_partial_object(inode, attr->ia_size, &len);
+				/* This had better not be shortened */
+				WARN_ONCE(!err && len != orig_len,
+					  "attr->ia_size=%lld orig_len=%lld len=%lld\n",
+					  attr->ia_size, orig_len, len);
+			}
+		}
+	}
 
 	return err;
 }

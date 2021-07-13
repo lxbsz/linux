@@ -1989,8 +1989,7 @@ static void ceph_zero_pagecache_range(struct inode *inode, loff_t offset,
 		ceph_zero_partial_page(inode, offset, length);
 }
 
-static int ceph_zero_partial_object(struct inode *inode,
-				    loff_t offset, loff_t *length)
+int ceph_zero_partial_object(struct inode *inode, loff_t offset, loff_t *length)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
