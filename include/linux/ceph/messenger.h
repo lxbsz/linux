@@ -247,7 +247,7 @@ struct ceph_msg {
 	struct ceph_msg_data_cursor	cursor;
 
 	struct ceph_connection *con;
-	struct list_head list_head;	/* links for connection lists */
+	struct list_head con_link;	/* links for connection lists */
 
 	struct kref kref;
 	bool more_to_follow;

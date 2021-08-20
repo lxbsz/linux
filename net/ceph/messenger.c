@@ -528,7 +528,7 @@ static void ceph_con_reset_protocol(struct ceph_connection *con)
  */
 static void ceph_msg_remove(struct ceph_msg *msg)
 {
-	list_del_init(&msg->list_head);
+	list_del_init(&msg->con_link);
 
 	ceph_msg_put(msg);
 }
@@ -537,7 +537,7 @@ static void ceph_msg_remove_list(struct list_head *head)
 {
 	while (!list_empty(head)) {
 		struct ceph_msg *msg = list_first_entry(head, struct ceph_msg,
-							list_head);
+							con_link);
 		ceph_msg_remove(msg);
 	}
 }
@@ -667,7 +667,7 @@ void ceph_con_discard_sent(struct ceph_connection *con, u64 ack_seq)
 	dout("%s con %p ack_seq %llu\n", __func__, con, ack_seq);
 	while (!list_empty(&con->out_sent)) {
 		msg = list_first_entry(&con->out_sent, struct ceph_msg,
-				       list_head);
+				       con_link);
 		WARN_ON(msg->needs_out_seq);
 		seq = le64_to_cpu(msg->hdr.seq);
 		if (seq > ack_seq)
@@ -692,7 +692,7 @@ void ceph_con_discard_requeued(struct ceph_connection *con, u64 reconnect_seq)
 	dout("%s con %p reconnect_seq %llu\n", __func__, con, reconnect_seq);
 	while (!list_empty(&con->out_queue)) {
 		msg = list_first_entry(&con->out_queue, struct ceph_msg,
-				       list_head);
+				       con_link);
 		if (msg->needs_out_seq)
 			break;
 		seq = le64_to_cpu(msg->hdr.seq);
@@ -1698,8 +1698,8 @@ void ceph_con_send(struct ceph_connection *con, struct ceph_msg *msg)
 
 	msg_con_set(msg, con);
 
-	BUG_ON(!list_empty(&msg->list_head));
-	list_add_tail(&msg->list_head, &con->out_queue);
+	BUG_ON(!list_empty(&msg->con_link));
+	list_add_tail(&msg->con_link, &con->out_queue);
 	dout("----- %p to %s%lld %d=%s len %d+%d+%d -----\n", msg,
 	     ENTITY_NAME(con->peer_name), le16_to_cpu(msg->hdr.type),
 	     ceph_msg_type_name(le16_to_cpu(msg->hdr.type)),
@@ -1730,7 +1730,7 @@ void ceph_msg_revoke(struct ceph_msg *msg)
 	}
 
 	mutex_lock(&con->mutex);
-	if (list_empty(&msg->list_head)) {
+	if (list_empty(&msg->con_link)) {
 		WARN_ON(con->out_msg == msg);
 		dout("%s con %p msg %p not linked\n", __func__, con, msg);
 		mutex_unlock(&con->mutex);
@@ -1915,7 +1915,7 @@ struct ceph_msg *ceph_msg_new2(int type, int front_len, int max_data_items,
 	m->hdr.priority = cpu_to_le16(CEPH_MSG_PRIO_DEFAULT);
 	m->hdr.front_len = cpu_to_le32(front_len);
 
-	INIT_LIST_HEAD(&m->list_head);
+	INIT_LIST_HEAD(&m->con_link);
 	kref_init(&m->kref);
 
 	/* front */
@@ -2055,14 +2055,14 @@ void ceph_con_get_out_msg(struct ceph_connection *con)
 	struct ceph_msg *msg;
 
 	BUG_ON(list_empty(&con->out_queue));
-	msg = list_first_entry(&con->out_queue, struct ceph_msg, list_head);
+	msg = list_first_entry(&con->out_queue, struct ceph_msg, con_link);
 	WARN_ON(msg->con != con);
 
 	/*
 	 * Put the message on "sent" list using a ref from ceph_con_send().
 	 * It is put when the message is acked or revoked.
 	 */
-	list_move_tail(&msg->list_head, &con->out_sent);
+	list_move_tail(&msg->con_link, &con->out_sent);
 
 	/*
 	 * Only assign outgoing seq # if we haven't sent this message
@@ -2101,7 +2101,7 @@ static void ceph_msg_release(struct kref *kref)
 	int i;
 
 	dout("%s %p\n", __func__, m);
-	WARN_ON(!list_empty(&m->list_head));
+	WARN_ON(!list_empty(&m->con_link));
 
 	msg_con_set(m, NULL);
 
