@@ -1299,8 +1299,6 @@ static void encode_cap_msg(struct ceph_msg *msg, struct cap_msg_args *arg)
 	 * fscrypt_auth holds the crypto context (if any). fscrypt_file
 	 * tracks the real i_size as an __le64 field (and we use a rounded-up
 	 * i_size in * the traditional size field).
-	 *
-	 * FIXME: should we encrypt fscrypt_file field?
 	 */
 	ceph_encode_32(&p, arg->fscrypt_auth_len);
 	ceph_encode_copy(&p, arg->fscrypt_auth, arg->fscrypt_auth_len);
