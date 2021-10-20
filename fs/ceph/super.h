@@ -1236,7 +1236,6 @@ extern int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
 extern int ceph_release(struct inode *inode, struct file *filp);
 extern void ceph_fill_inline_data(struct inode *inode, struct page *locked_page,
 				  char *data, size_t len);
-int ceph_zero_partial_object(struct inode *inode, loff_t offset, loff_t *length);
 
 /* dir.c */
 extern const struct file_operations ceph_dir_fops;
