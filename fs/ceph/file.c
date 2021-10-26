@@ -902,7 +902,8 @@ static inline void fscrypt_adjust_off_and_len(struct inode *inode, u64 *off, u64
  * only return a short read to the caller if we hit EOF.
  */
 ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
-			 struct iov_iter *to, int *retry_op)
+			 struct iov_iter *to, int *retry_op,
+			 u64 *assert_ver)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_fs_client *fsc = ceph_inode_to_client(inode);
@@ -978,6 +979,9 @@ ssize_t __ceph_sync_read(struct inode *inode, loff_t *ki_pos,
 					 req->r_end_latency,
 					 len, ret);
 
+		/* Grab assert version. It must be non-zero. */
+		*assert_ver = req->r_version;
+		WARN_ON_ONCE(assert_ver == 0);
 		ceph_osdc_put_request(req);
 
 		dout("sync_read %llu~%llu got %zd i_size %llu%s\n",
@@ -1074,12 +1078,14 @@ static ssize_t ceph_sync_read(struct kiocb *iocb, struct iov_iter *to,
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
+	u64 assert_ver;
 
 	dout("sync_read on file %p %llu~%u %s\n", file, iocb->ki_pos,
 	     (unsigned)iov_iter_count(to),
 	     (file->f_flags & O_DIRECT) ? "O_DIRECT" : "");
 
-	return __ceph_sync_read(inode, &iocb->ki_pos, to, retry_op);
+	return __ceph_sync_read(inode, &iocb->ki_pos, to, retry_op,
+				&assert_ver);
 
 }
 

@@ -12,9 +12,10 @@
 struct ceph_fscrypt_truncate_size_header {
        __u8  ver;
        __u8  compat;
-       /* length of sizeof(file_offset + block_size + BLOCK SIZE) */
+       /* length of sizeof(assert_ver + file_offset + block_size + CEPH_FSCRYPT_BLOCK_SIZE) */
        __le32 data_len;
 
+       __le64 assert_ver;
        __le64 file_offset;
        __le32 block_size;
 } __packed;

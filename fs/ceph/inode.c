@@ -2258,6 +2258,7 @@ static int fill_fscrypt_truncate(struct inode *inode,
 	int len = CEPH_FSCRYPT_BLOCK_SIZE;
 	loff_t i_size = i_size_read(inode);
 	bool fill_header_only = false;
+	u64 assert_ver = cpu_to_le64(0);
 	int got, ret;
 
 	ret = __ceph_get_caps(inode, NULL, CEPH_CAP_FILE_RD, 0, -1, &got);
@@ -2278,7 +2279,7 @@ static int fill_fscrypt_truncate(struct inode *inode,
 	iov_iter_kvec(&iter, READ, &iov, 1, len);
 
 	pos = orig_pos;
-	ret = __ceph_sync_read(inode, &pos, &iter, &retry_op);
+	ret = __ceph_sync_read(inode, &pos, &iter, &retry_op, &assert_ver);
 
 	/*
 	 * If we hit a hole here, we should just skip filling
@@ -2316,12 +2317,14 @@ fill_last_block:
 	/* Insert the header first */
 	header.ver = 1;
 	header.compat = 1;
-	/* sizeof(file_offset) + sizeof(block_size) + CEPH_FSCRYPT_BLOCK_SIZE */
-	header.data_len = cpu_to_le32(8 + 8 + CEPH_FSCRYPT_BLOCK_SIZE);
 	if (fill_header_only) {
+		header.data_len = cpu_to_le32(8 + 8 + 4);
+		header.assert_ver = cpu_to_le64(0);
 		header.file_offset = cpu_to_le64(0);
 		header.block_size = cpu_to_le64(0);
 	} else {
+		header.data_len = cpu_to_le32(8 + 8 + 4 + CEPH_FSCRYPT_BLOCK_SIZE);
+		header.assert_ver = assert_ver;
 		header.file_offset = cpu_to_le64(orig_pos);
 		header.block_size = cpu_to_le64(CEPH_FSCRYPT_BLOCK_SIZE);
 	}
