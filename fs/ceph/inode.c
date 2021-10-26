@@ -2237,6 +2237,9 @@ static const struct inode_operations ceph_encrypted_symlink_iops = {
 /*
  * Transfer the encrypted last block to the MDS and the MDS
  * will update the file when truncating a smaller size.
+ *
+ * We don't support a PAGE_SIZE that is smaller than the
+ * CEPH_FSCRYPT_BLOCK_SIZE.
  */
 static int fill_fscrypt_truncate(struct inode *inode,
 				 struct ceph_mds_request *req,
@@ -2245,19 +2248,17 @@ static int fill_fscrypt_truncate(struct inode *inode,
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	int boff = attr->ia_size % CEPH_FSCRYPT_BLOCK_SIZE;
 	loff_t pos, orig_pos = round_down(attr->ia_size, CEPH_FSCRYPT_BLOCK_SIZE);
-	size_t blen = min_t(size_t, CEPH_FSCRYPT_BLOCK_SIZE, PAGE_SIZE);
+	u64 block = orig_pos >> CEPH_FSCRYPT_BLOCK_SHIFT;
 	struct ceph_pagelist *pagelist = NULL;
-	struct kvec *iovs = NULL;
+	struct kvec iov;
 	struct iov_iter iter;
-	struct page **pages = NULL;
+	struct page *page = NULL;
 	struct ceph_fscrypt_truncate_size_header header;
-	int num_pages = 0;
 	int retry_op = 0;
-	int iov_off, iov_idx, len = 0;
+	int len = CEPH_FSCRYPT_BLOCK_SIZE;
 	loff_t i_size = i_size_read(inode);
 	bool fill_header_only = false;
-	int ret, i;
-	int got;
+	int got, ret;
 
 	ret = __ceph_get_caps(inode, NULL, CEPH_CAP_FILE_RD, 0, -1, &got);
 	if (ret < 0)
@@ -2266,25 +2267,15 @@ static int fill_fscrypt_truncate(struct inode *inode,
 	dout("%s size %lld -> %lld got cap refs on %s\n", __func__,
 	     i_size, attr->ia_size, ceph_cap_string(got));
 
-	/* Should we consider the tiny page in 1K case ? */
-	num_pages = (CEPH_FSCRYPT_BLOCK_SIZE + PAGE_SIZE -1) / PAGE_SIZE;
-	pages = ceph_alloc_page_vector(num_pages, GFP_NOFS);
-	if (IS_ERR(pages)) {
-		ret = PTR_ERR(pages);
-		goto out;
-	}
-
-	iovs = kcalloc(num_pages, sizeof(struct kvec), GFP_NOFS);
-	if (!iovs) {
+	page = __page_cache_alloc(GFP_KERNEL);
+	if (page == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
-	for (i = 0; i < num_pages; i++) {
-		iovs[i].iov_base = kmap_local_page(pages[i]);
-		iovs[i].iov_len = PAGE_SIZE;
-		len += iovs[i].iov_len;
-	}
-	iov_iter_kvec(&iter, READ, iovs, num_pages, len);
+
+	iov.iov_base = kmap_local_page(page);
+	iov.iov_len = len;
+	iov_iter_kvec(&iter, READ, &iov, 1, len);
 
 	pos = orig_pos;
 	ret = __ceph_sync_read(inode, &pos, &iter, &retry_op);
@@ -2307,22 +2298,15 @@ static int fill_fscrypt_truncate(struct inode *inode,
 	}
 
 	/* truncate and zero out the extra contents for the last block */
-	iov_idx = boff / PAGE_SIZE;
-	iov_off = boff % PAGE_SIZE;
-	memset(iovs[iov_idx].iov_base + iov_off, 0, PAGE_SIZE - iov_off);
+	memset(iov.iov_base + boff, 0, PAGE_SIZE - boff);
 
 	/* encrypt the last block */
-	for (i = 0; i < num_pages; i++) {
-		u32 shift = CEPH_FSCRYPT_BLOCK_SIZE > PAGE_SIZE ?
-			    PAGE_SHIFT : CEPH_FSCRYPT_BLOCK_SHIFT;
-		u64 block = orig_pos >> shift;
-
-		ret = fscrypt_encrypt_block_inplace(inode, pages[i],
-						    blen, 0, block,
-						    GFP_KERNEL);
-		if (ret)
-			goto out;
-	}
+	ret = fscrypt_encrypt_block_inplace(inode, page,
+					    CEPH_FSCRYPT_BLOCK_SIZE,
+					    0, block,
+					    GFP_KERNEL);
+	if (ret)
+		goto out;
 
 fill_last_block:
 	pagelist = ceph_pagelist_alloc(GFP_KERNEL);
@@ -2332,9 +2316,8 @@ fill_last_block:
 	/* Insert the header first */
 	header.ver = 1;
 	header.compat = 1;
-	/* sizeof(file_offset) + sizeof(block_size) + blen */
+	/* sizeof(file_offset) + sizeof(block_size) + CEPH_FSCRYPT_BLOCK_SIZE */
 	header.data_len = cpu_to_le32(8 + 8 + CEPH_FSCRYPT_BLOCK_SIZE);
-	header.file_offset = cpu_to_le64(orig_pos);
 	if (fill_header_only) {
 		header.file_offset = cpu_to_le64(0);
 		header.block_size = cpu_to_le64(0);
@@ -2348,22 +2331,18 @@ fill_last_block:
 
 	if (!fill_header_only) {
 		/* Append the last block contents to pagelist */
-		for (i = 0; i < num_pages; i++) {
-			ret = ceph_pagelist_append(pagelist, iovs[i].iov_base,
-						   blen);
-			if (ret)
-				goto out;
-		}
+		ret = ceph_pagelist_append(pagelist, iov.iov_base,
+					   CEPH_FSCRYPT_BLOCK_SIZE);
+		if (ret)
+			goto out;
 	}
 	req->r_pagelist = pagelist;
 out:
 	dout("%s %p size dropping cap refs on %s\n", __func__,
 	     inode, ceph_cap_string(got));
-	for (i = 0; iovs && i < num_pages; i++)
-		kunmap_local(iovs[i].iov_base);
-	kfree(iovs);
-	if (pages)
-		ceph_release_page_vector(pages, num_pages);
+	kunmap_local(iov.iov_base);
+	if (page)
+		__free_pages(page, 0);
 	if (ret && pagelist)
 		ceph_pagelist_release(pagelist);
 	ceph_put_cap_refs(ci, got);
